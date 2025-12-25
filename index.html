@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>학교생활기록부 맞춤법 검사 프로그램</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/7.8.2/docx.min.js"></script>
+    <script src="https://unpkg.com/mammoth@1.6.0/mammoth.browser.min.js"></script>
+    <script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
     <style>
         * {
@@ -419,12 +419,6 @@
             opacity: 0.95;
         }
 
-        .privacy-notice .small-text {
-            font-size: 0.9em;
-            margin-top: 15px;
-            opacity: 0.85;
-        }
-
         /* 모바일 반응형 디자인 */
         @media (max-width: 768px) {
             body {
@@ -619,6 +613,7 @@
             <div class="loading" id="loading">
                 <div class="spinner"></div>
                 <p>Word 문서를 분석하고 있습니다...</p>
+                <p style="font-size: 0.9em; margin-top: 10px; opacity: 0.8;">AI 맞춤법 검사 API로 정확도를 높이는 중입니다.</p>
             </div>
 
             <div class="results" id="results">
@@ -704,8 +699,8 @@
             const files = e.dataTransfer.files;
             if (files.length > 0) {
                 const file = files[0];
-                const fileName = file.name.toLowerCase();
-                if (fileName.endsWith('.docx') || fileName.endsWith('.doc')) {
+                const fileNameLower = file.name.toLowerCase();
+                if (fileNameLower.endsWith('.docx') || fileNameLower.endsWith('.doc')) {
                     fileInput.files = files;
                     handleFileSelect(file);
                 } else {
@@ -737,6 +732,10 @@
                 // Word 문서 텍스트 추출
                 extractedText = await extractTextFromWord(file);
                 
+                if (!extractedText || extractedText.trim() === '') {
+                    throw new Error('문서에서 텍스트를 추출할 수 없습니다.');
+                }
+                
                 // 맞춤법 검사
                 detectedErrors = checkKoreanSpelling(extractedText);
                 
@@ -749,7 +748,7 @@
                 loading.classList.remove('show');
                 results.classList.add('show');
             } catch (error) {
-                alert('Word 문서 처리 중 오류가 발생했습니다.');
+                alert('Word 문서 처리 중 오류가 발생했습니다: ' + error.message);
                 console.error(error);
                 loading.classList.remove('show');
                 fileInfo.classList.add('show');
@@ -757,15 +756,28 @@
         });
 
         async function extractTextFromWord(file) {
-            const arrayBuffer = await file.arrayBuffer();
-            const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
-            return result.value;
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
+                return result.value;
+            } catch (error) {
+                console.error('텍스트 추출 오류:', error);
+                throw new Error('Word 문서를 읽을 수 없습니다. 파일이 손상되었거나 지원되지 않는 형식일 수 있습니다.');
+            }
         }
 
-        function checkKoreanSpelling(text) {
+        async function checkKoreanSpelling(text) {
             const errors = [];
 
-            // 일반적인 맞춤법 오류 패턴
+            // 1. 부산대학교 맞춤법 검사 API 호출
+            try {
+                const apiErrors = await checkWithAPI(text);
+                errors.push(...apiErrors);
+            } catch (error) {
+                console.log('API 검사 실패, 로컬 검사만 진행:', error);
+            }
+
+            // 2. 로컬 기본 맞춤법 검사 (API 실패 시 백업용)
             const spellingRules = [
                 { wrong: /되요/g, correct: '돼요', type: 'spelling', desc: "'되다'의 활용형은 '돼요'입니다" },
                 { wrong: /안되/g, correct: '안 돼', type: 'spacing', desc: "'안'과 '되다'는 띄어 써야 합니다" },
@@ -786,22 +798,282 @@
 
             const lines = text.split('\n');
             lines.forEach((line, lineIndex) => {
+                // 기본 맞춤법 검사
                 spellingRules.forEach(rule => {
                     const matches = [...line.matchAll(rule.wrong)];
                     matches.forEach(match => {
-                        errors.push({
-                            line: lineIndex + 1,
-                            wrong: match[0],
-                            correct: typeof rule.correct === 'string' ? rule.correct : match[0].replace(rule.wrong, rule.correct),
-                            type: rule.type,
-                            description: rule.desc,
-                            context: line.substring(Math.max(0, match.index - 20), Math.min(line.length, match.index + match[0].length + 20)),
-                            position: match.index
-                        });
+                        // API에서 이미 발견한 오류는 중복 추가 안 함
+                        const isDuplicate = errors.some(e => 
+                            e.wrong === match[0] && Math.abs(e.position - match.index) < 5
+                        );
+                        
+                        if (!isDuplicate) {
+                            errors.push({
+                                line: lineIndex + 1,
+                                wrong: match[0],
+                                correct: typeof rule.correct === 'string' ? rule.correct : match[0].replace(rule.wrong, rule.correct),
+                                type: rule.type,
+                                description: rule.desc,
+                                context: line.substring(Math.max(0, match.index - 20), Math.min(line.length, match.index + match[0].length + 20)),
+                                position: match.index
+                            });
+                        }
                     });
+                });
+
+                // 3. 한글 자모 분리 오류 검사 (타이핑 오타)
+                const typoErrors = detectTypoErrors(line, lineIndex);
+                typoErrors.forEach(typoError => {
+                    const isDuplicate = errors.some(e => 
+                        e.wrong === typoError.wrong && Math.abs(e.position - typoError.position) < 5
+                    );
+                    if (!isDuplicate) {
+                        errors.push(typoError);
+                    }
                 });
             });
 
+            return errors;
+        }
+
+        // 부산대학교 맞춤법 검사 API 호출
+        async function checkWithAPI(text) {
+            const errors = [];
+            
+            // 텍스트를 500자 단위로 나누어 API 호출 (API 제한)
+            const chunks = splitTextIntoChunks(text, 500);
+            
+            for (const chunk of chunks) {
+                try {
+                    const response = await fetch('https://speller.cs.pusan.ac.kr/results', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                        },
+                        body: `text1=${encodeURIComponent(chunk.text)}`
+                    });
+
+                    const data = await response.json();
+                    
+                    if (data.errInfo && Array.isArray(data.errInfo)) {
+                        data.errInfo.forEach(error => {
+                            const errorType = getErrorType(error.help);
+                            
+                            errors.push({
+                                line: Math.floor(chunk.offset / 100) + 1, // 대략적인 줄 번호
+                                wrong: error.orgStr || error.help.split('→')[0]?.trim(),
+                                correct: error.candWord || error.help.split('→')[1]?.trim(),
+                                type: errorType,
+                                description: error.help || '맞춤법 오류',
+                                context: chunk.text.substring(
+                                    Math.max(0, error.start - 20), 
+                                    Math.min(chunk.text.length, error.end + 20)
+                                ),
+                                position: chunk.offset + (error.start || 0)
+                            });
+                        });
+                    }
+                } catch (error) {
+                    console.error('API 호출 오류:', error);
+                    // API 실패 시 계속 진행
+                }
+            }
+            
+            return errors;
+        }
+
+        // 텍스트를 청크로 분할
+        function splitTextIntoChunks(text, maxLength) {
+            const chunks = [];
+            let offset = 0;
+            
+            while (offset < text.length) {
+                const chunk = text.substring(offset, offset + maxLength);
+                chunks.push({ text: chunk, offset: offset });
+                offset += maxLength;
+            }
+            
+            return chunks;
+        }
+
+        // 오류 타입 판단
+        function getErrorType(helpText) {
+            if (!helpText) return 'spelling';
+            
+            if (helpText.includes('띄어쓰기') || helpText.includes('띄어 쓰기')) {
+                return 'spacing';
+            } else if (helpText.includes('표준어')) {
+                return 'standard';
+            } else {
+                return 'spelling';
+            }
+        }
+
+        // 한글 자모 분리 및 타이핑 오류 검사
+        function detectTypoErrors(line, lineIndex) {
+            const errors = [];
+            
+            // 한글 자모가 포함된 단어 찾기 (ㄱ-ㅎ, ㅏ-ㅣ)
+            const jamoPattern = /[가-힣]*[ㄱ-ㅎㅏ-ㅣ]+[가-힣ㄱ-ㅎㅏ-ㅣ]*/g;
+            const matches = [...line.matchAll(jamoPattern)];
+            
+            matches.forEach(match => {
+                const wrong = match[0];
+                const position = match.index;
+                
+                // 자모가 섞인 단어 수정 시도
+                const corrected = correctJamoWord(wrong);
+                
+                if (corrected && corrected !== wrong) {
+                    errors.push({
+                        line: lineIndex + 1,
+                        wrong: wrong,
+                        correct: corrected,
+                        type: 'spelling',
+                        description: '타이핑 오류 (자모 분리)',
+                        context: line.substring(Math.max(0, position - 20), Math.min(line.length, position + wrong.length + 20)),
+                        position: position
+                    });
+                }
+            });
+
+            // 일반적인 오타 패턴 검사
+            const commonTypos = detectCommonTypos(line, lineIndex);
+            errors.push(...commonTypos);
+            
+            return errors;
+        }
+
+        // 자모가 섞인 단어를 올바른 단어로 수정
+        function correctJamoWord(word) {
+            // 자모를 완성형 한글로 조합
+            let result = '';
+            let i = 0;
+            
+            while (i < word.length) {
+                const char = word[i];
+                
+                // 완성형 한글이면 그대로 추가
+                if (isCompleteHangul(char)) {
+                    result += char;
+                    i++;
+                    continue;
+                }
+                
+                // 자음/모음이면 조합 시도
+                if (isJamo(char)) {
+                    const combined = combineJamo(word.substring(i));
+                    if (combined.char) {
+                        result += combined.char;
+                        i += combined.length;
+                    } else {
+                        result += char;
+                        i++;
+                    }
+                } else {
+                    result += char;
+                    i++;
+                }
+            }
+            
+            return result;
+        }
+
+        // 완성형 한글인지 확인
+        function isCompleteHangul(char) {
+            const code = char.charCodeAt(0);
+            return code >= 0xAC00 && code <= 0xD7A3;
+        }
+
+        // 자음/모음인지 확인
+        function isJamo(char) {
+            const code = char.charCodeAt(0);
+            return (code >= 0x3131 && code <= 0x3163);
+        }
+
+        // 자모 조합
+        function combineJamo(str) {
+            const CHO = ['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+            const JUNG = ['ㅏ','ㅐ','ㅑ','ㅒ','ㅓ','ㅔ','ㅕ','ㅖ','ㅗ','ㅘ','ㅙ','ㅚ','ㅛ','ㅜ','ㅝ','ㅞ','ㅟ','ㅠ','ㅡ','ㅢ','ㅣ'];
+            const JONG = ['','ㄱ','ㄲ','ㄳ','ㄴ','ㄵ','ㄶ','ㄷ','ㄹ','ㄺ','ㄻ','ㄼ','ㄽ','ㄾ','ㄿ','ㅀ','ㅁ','ㅂ','ㅄ','ㅅ','ㅆ','ㅇ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+            
+            if (str.length < 2) return { char: null, length: 0 };
+            
+            const char1 = str[0];
+            const char2 = str[1];
+            const char3 = str.length > 2 ? str[2] : '';
+            
+            const choIdx = CHO.indexOf(char1);
+            const jungIdx = JUNG.indexOf(char2);
+            
+            // 초성 + 중성
+            if (choIdx >= 0 && jungIdx >= 0) {
+                let jongIdx = 0;
+                let length = 2;
+                
+                // 종성 확인
+                if (char3) {
+                    const tempJongIdx = JONG.indexOf(char3);
+                    if (tempJongIdx > 0) {
+                        jongIdx = tempJongIdx;
+                        length = 3;
+                    }
+                }
+                
+                const code = 0xAC00 + (choIdx * 21 * 28) + (jungIdx * 28) + jongIdx;
+                return { char: String.fromCharCode(code), length: length };
+            }
+            
+            return { char: null, length: 0 };
+        }
+
+        // 일반적인 오타 패턴 검사
+        function detectCommonTypos(line, lineIndex) {
+            const errors = [];
+            
+            // 자주 발생하는 오타 사전
+            const typoDict = {
+                '친ㄱ규': '친구',
+                '학ㄱㅛ': '학교',
+                '선ㅅ애님': '선생님',
+                '반ㅈ장': '반장',
+                '공ㅂ부': '공부',
+                '수ㅇ업': '수업',
+                '시ㅎ험': '시험',
+                '숙ㅈ제': '숙제',
+                '교ㅅ실': '교실',
+                '도ㅅ서관': '도서관',
+                '운ㄷ장': '운동장',
+                '급ㅅ식': '급식',
+                '쉬ㅅ는': '쉬는',
+                '방ㅎ과후': '방과후',
+                '동ㅇ아리': '동아리',
+                '체ㅇ육': '체육',
+                '음ㅇ악': '음악',
+                '미ㅅ술': '미술',
+                '과ㅎ학': '과학',
+                '사ㅎ회': '사회',
+                '수ㅎ학': '수학',
+                '국ㅇ어': '국어',
+                '영ㅇ어': '영어',
+            };
+            
+            // 오타 사전 검사
+            for (const [wrong, correct] of Object.entries(typoDict)) {
+                const index = line.indexOf(wrong);
+                if (index !== -1) {
+                    errors.push({
+                        line: lineIndex + 1,
+                        wrong: wrong,
+                        correct: correct,
+                        type: 'spelling',
+                        description: '타이핑 오류',
+                        context: line.substring(Math.max(0, index - 20), Math.min(line.length, index + wrong.length + 20)),
+                        position: index
+                    });
+                }
+            }
+            
             return errors;
         }
 
@@ -920,143 +1192,161 @@
                 return;
             }
 
-            const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType, UnderlineType } = docx;
+            try {
+                const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType, UnderlineType } = docx;
 
-            const doc = new Document({
-                sections: [{
-                    properties: {},
-                    children: [
-                        new Paragraph({
-                            text: "맞춤법 검사 결과",
-                            heading: HeadingLevel.HEADING_1,
-                            alignment: AlignmentType.CENTER,
-                        }),
-                        new Paragraph({ text: "" }),
-                        new Paragraph({
-                            children: [
-                                new TextRun({
-                                    text: `총 오류: ${detectedErrors.length}개`,
-                                    bold: true,
-                                    size: 28,
-                                }),
-                            ],
-                        }),
-                        new Paragraph({
-                            children: [
-                                new TextRun({
-                                    text: `- 맞춤법 오류: ${detectedErrors.filter(e => e.type === 'spelling').length}개`,
+                const children = [
+                    new Paragraph({
+                        text: "맞춤법 검사 결과",
+                        heading: HeadingLevel.HEADING_1,
+                        alignment: AlignmentType.CENTER,
+                    }),
+                    new Paragraph({ text: "" }),
+                    new Paragraph({
+                        children: [
+                            new TextRun({
+                                text: `총 오류: ${detectedErrors.length}개`,
+                                bold: true,
+                                size: 28,
+                            }),
+                        ],
+                    }),
+                    new Paragraph({
+                        children: [
+                            new TextRun({
+                                text: `- 맞춤법 오류: ${detectedErrors.filter(e => e.type === 'spelling').length}개`,
+                                size: 24,
+                            }),
+                        ],
+                    }),
+                    new Paragraph({
+                        children: [
+                            new TextRun({
+                                text: `- 띄어쓰기 오류: ${detectedErrors.filter(e => e.type === 'spacing').length}개`,
+                                size: 24,
+                            }),
+                        ],
+                    }),
+                    new Paragraph({
+                        children: [
+                            new TextRun({
+                                text: `- 비표준어: ${detectedErrors.filter(e => e.type === 'standard').length}개`,
+                                size: 24,
+                            }),
+                        ],
+                    }),
+                    new Paragraph({ text: "" }),
+                    new Paragraph({ text: "" }),
+                    new Paragraph({
+                        text: "원본 문서 (오류 표시)",
+                        heading: HeadingLevel.HEADING_2,
+                    }),
+                    new Paragraph({ text: "" }),
+                ];
+
+                // 원본 텍스트 추가 (오류 하이라이트)
+                const textLines = extractedText.split('\n');
+                textLines.forEach(line => {
+                    const lineChildren = [];
+                    let lastIndex = 0;
+                    let hasError = false;
+
+                    // 이 줄에 있는 모든 오류 찾기
+                    detectedErrors.forEach(error => {
+                        const index = line.indexOf(error.wrong, lastIndex);
+                        if (index !== -1 && index >= lastIndex) {
+                            hasError = true;
+                            // 오류 이전 텍스트
+                            if (index > lastIndex) {
+                                lineChildren.push(new TextRun({
+                                    text: line.substring(lastIndex, index),
                                     size: 24,
-                                }),
-                            ],
-                        }),
-                        new Paragraph({
-                            children: [
-                                new TextRun({
-                                    text: `- 띄어쓰기 오류: ${detectedErrors.filter(e => e.type === 'spacing').length}개`,
-                                    size: 24,
-                                }),
-                            ],
-                        }),
-                        new Paragraph({
-                            children: [
-                                new TextRun({
-                                    text: `- 비표준어: ${detectedErrors.filter(e => e.type === 'standard').length}개`,
-                                    size: 24,
-                                }),
-                            ],
-                        }),
-                        new Paragraph({ text: "" }),
-                        new Paragraph({ text: "" }),
-                        new Paragraph({
-                            text: "원본 문서 (오류 표시)",
-                            heading: HeadingLevel.HEADING_2,
-                        }),
-                        new Paragraph({ text: "" }),
-                        ...createErrorHighlightedParagraphs(extractedText, detectedErrors),
-                        new Paragraph({ text: "" }),
-                        new Paragraph({ text: "" }),
-                        new Paragraph({
-                            text: "발견된 오류 목록",
-                            heading: HeadingLevel.HEADING_2,
-                        }),
-                        new Paragraph({ text: "" }),
-                        ...detectedErrors.map((error, index) => {
-                            return new Paragraph({
-                                children: [
-                                    new TextRun({
-                                        text: `${index + 1}. `,
-                                        bold: true,
-                                    }),
-                                    new TextRun({
-                                        text: `틀린 표현: "${error.wrong}"`,
-                                        color: "DC3545",
-                                    }),
-                                    new TextRun({
-                                        text: ` → 올바른 표현: "${error.correct}"`,
-                                        color: "28A745",
-                                    }),
-                                    new TextRun({
-                                        text: `\n   ${error.description}`,
-                                        italics: true,
-                                    }),
-                                ],
-                            });
-                        }),
-                    ],
-                }],
-            });
-
-            const blob = await docx.Packer.toBlob(doc);
-            saveAs(blob, "맞춤법_검사_결과.docx");
-        });
-
-        function createErrorHighlightedParagraphs(text, errors) {
-            const lines = text.split('\n');
-            return lines.map(line => {
-                const children = [];
-                let lastIndex = 0;
-                let hasError = false;
-
-                // 이 줄에 오류가 있는지 확인
-                errors.forEach(error => {
-                    const index = line.indexOf(error.wrong, lastIndex);
-                    if (index !== -1 && index >= lastIndex) {
-                        hasError = true;
-                        // 오류 이전 텍스트
-                        if (index > lastIndex) {
-                            children.push(new TextRun({
-                                text: line.substring(lastIndex, index),
-                            }));
-                        }
-                        // 오류 텍스트 (빨간색, 밑줄)
-                        children.push(new TextRun({
-                            text: error.wrong,
-                            color: "DC3545",
-                            underline: {
-                                type: UnderlineType.SINGLE,
+                                }));
+                            }
+                            // 오류 텍스트 (빨간색, 밑줄)
+                            lineChildren.push(new TextRun({
+                                text: error.wrong,
                                 color: "DC3545",
-                            },
-                            bold: true,
+                                underline: {
+                                    type: UnderlineType.SINGLE,
+                                    color: "DC3545",
+                                },
+                                bold: true,
+                                size: 24,
+                            }));
+                            lastIndex = index + error.wrong.length;
+                        }
+                    });
+
+                    // 나머지 텍스트
+                    if (lastIndex < line.length) {
+                        lineChildren.push(new TextRun({
+                            text: line.substring(lastIndex),
+                            size: 24,
                         }));
-                        lastIndex = index + error.wrong.length;
                     }
+
+                    // children이 비어있으면 빈 줄 또는 전체 줄
+                    if (lineChildren.length === 0) {
+                        lineChildren.push(new TextRun({ 
+                            text: line || "",
+                            size: 24,
+                        }));
+                    }
+
+                    children.push(new Paragraph({ children: lineChildren }));
                 });
 
-                // 나머지 텍스트
-                if (lastIndex < line.length) {
-                    children.push(new TextRun({
-                        text: line.substring(lastIndex),
+                // 오류 목록 추가
+                children.push(new Paragraph({ text: "" }));
+                children.push(new Paragraph({ text: "" }));
+                children.push(new Paragraph({
+                    text: "발견된 오류 목록",
+                    heading: HeadingLevel.HEADING_2,
+                }));
+                children.push(new Paragraph({ text: "" }));
+
+                detectedErrors.forEach((error, index) => {
+                    children.push(new Paragraph({
+                        children: [
+                            new TextRun({
+                                text: `${index + 1}. `,
+                                bold: true,
+                                size: 24,
+                            }),
+                            new TextRun({
+                                text: `틀린 표현: "${error.wrong}"`,
+                                color: "DC3545",
+                                size: 24,
+                            }),
+                            new TextRun({
+                                text: ` → 올바른 표현: "${error.correct}"`,
+                                color: "28A745",
+                                size: 24,
+                            }),
+                            new TextRun({
+                                text: `\n   ${error.description}`,
+                                italics: true,
+                                size: 22,
+                            }),
+                        ],
                     }));
-                }
+                });
 
-                // children이 비어있으면 빈 줄
-                if (children.length === 0) {
-                    children.push(new TextRun({ text: line || "" }));
-                }
+                const doc = new Document({
+                    sections: [{
+                        properties: {},
+                        children: children,
+                    }],
+                });
 
-                return new Paragraph({ children });
-            });
-        }
+                const blob = await docx.Packer.toBlob(doc);
+                saveAs(blob, "맞춤법_검사_결과.docx");
+            } catch (error) {
+                alert('Word 파일 생성 중 오류가 발생했습니다: ' + error.message);
+                console.error(error);
+            }
+        });
 
         // 수정본 Word 다운로드
         downloadCorrectedBtn.addEventListener('click', async () => {
@@ -1065,48 +1355,54 @@
                 return;
             }
 
-            const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType } = docx;
+            try {
+                const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType } = docx;
 
-            const lines = correctedText.split('\n');
-            const paragraphs = lines.map(line => 
-                new Paragraph({
-                    children: [
-                        new TextRun({
-                            text: line || "",
-                            size: 24,
-                        }),
-                    ],
-                })
-            );
+                const lines = correctedText.split('\n');
+                const paragraphs = [
+                    new Paragraph({
+                        text: "수정된 문서",
+                        heading: HeadingLevel.HEADING_1,
+                        alignment: AlignmentType.CENTER,
+                    }),
+                    new Paragraph({
+                        children: [
+                            new TextRun({
+                                text: `총 ${detectedErrors.length}개의 오류가 수정되었습니다.`,
+                                italics: true,
+                                size: 22,
+                            }),
+                        ],
+                        alignment: AlignmentType.CENTER,
+                    }),
+                    new Paragraph({ text: "" }),
+                    new Paragraph({ text: "" }),
+                ];
 
-            const doc = new Document({
-                sections: [{
-                    properties: {},
-                    children: [
-                        new Paragraph({
-                            text: "수정된 문서",
-                            heading: HeadingLevel.HEADING_1,
-                            alignment: AlignmentType.CENTER,
-                        }),
-                        new Paragraph({
-                            children: [
-                                new TextRun({
-                                    text: `총 ${detectedErrors.length}개의 오류가 수정되었습니다.`,
-                                    italics: true,
-                                    size: 22,
-                                }),
-                            ],
-                            alignment: AlignmentType.CENTER,
-                        }),
-                        new Paragraph({ text: "" }),
-                        new Paragraph({ text: "" }),
-                        ...paragraphs,
-                    ],
-                }],
-            });
+                lines.forEach(line => {
+                    paragraphs.push(new Paragraph({
+                        children: [
+                            new TextRun({
+                                text: line || "",
+                                size: 24,
+                            }),
+                        ],
+                    }));
+                });
 
-            const blob = await docx.Packer.toBlob(doc);
-            saveAs(blob, "수정본_문서.docx");
+                const doc = new Document({
+                    sections: [{
+                        properties: {},
+                        children: paragraphs,
+                    }],
+                });
+
+                const blob = await docx.Packer.toBlob(doc);
+                saveAs(blob, "수정본_문서.docx");
+            } catch (error) {
+                alert('Word 파일 생성 중 오류가 발생했습니다: ' + error.message);
+                console.error(error);
+            }
         });
     </script>
 </body>
