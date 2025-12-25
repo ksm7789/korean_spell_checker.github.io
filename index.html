@@ -4,8 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>학교생활기록부 맞춤법 검사 프로그램</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/7.8.2/docx.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -605,9 +606,9 @@
         <div class="content">
             <div class="upload-section" id="uploadSection">
                 <div class="upload-icon">📄</div>
-                <h2>PDF 파일을 업로드하세요</h2>
+                <h2>Word 문서를 업로드하세요</h2>
                 <p>파일을 드래그 앤 드롭하거나 클릭하여 선택하세요</p>
-                <input type="file" id="fileInput" accept=".pdf">
+                <input type="file" id="fileInput" accept=".docx,.doc">
             </div>
 
             <div class="file-info" id="fileInfo">
@@ -617,7 +618,7 @@
 
             <div class="loading" id="loading">
                 <div class="spinner"></div>
-                <p>PDF 파일을 분석하고 있습니다...</p>
+                <p>Word 문서를 분석하고 있습니다...</p>
             </div>
 
             <div class="results" id="results">
@@ -642,10 +643,10 @@
             <div class="download-section">
                 <h3>📥 다운로드 옵션</h3>
                 <button class="btn btn-download" id="downloadBtn">
-                    검사 결과 PDF 다운로드
+                    검사 결과 Word 다운로드
                 </button>
                 <button class="btn btn-corrected" id="downloadCorrectedBtn">
-                    수정본 PDF 다운로드
+                    수정본 Word 다운로드
                 </button>
             </div>
 
@@ -668,8 +669,6 @@
     </div>
 
     <script>
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
         let extractedText = '';
         let correctedText = '';
         let detectedErrors = [];
@@ -703,9 +702,15 @@
             e.preventDefault();
             uploadSection.classList.remove('dragover');
             const files = e.dataTransfer.files;
-            if (files.length > 0 && files[0].type === 'application/pdf') {
-                fileInput.files = files;
-                handleFileSelect(files[0]);
+            if (files.length > 0) {
+                const file = files[0];
+                const fileName = file.name.toLowerCase();
+                if (fileName.endsWith('.docx') || fileName.endsWith('.doc')) {
+                    fileInput.files = files;
+                    handleFileSelect(file);
+                } else {
+                    alert('Word 문서 파일(.docx, .doc)만 업로드 가능합니다.');
+                }
             }
         });
 
@@ -729,8 +734,8 @@
             fileInfo.classList.remove('show');
 
             try {
-                // PDF 텍스트 추출
-                extractedText = await extractTextFromPDF(file);
+                // Word 문서 텍스트 추출
+                extractedText = await extractTextFromWord(file);
                 
                 // 맞춤법 검사
                 detectedErrors = checkKoreanSpelling(extractedText);
@@ -744,26 +749,17 @@
                 loading.classList.remove('show');
                 results.classList.add('show');
             } catch (error) {
-                alert('PDF 파일 처리 중 오류가 발생했습니다.');
+                alert('Word 문서 처리 중 오류가 발생했습니다.');
                 console.error(error);
                 loading.classList.remove('show');
                 fileInfo.classList.add('show');
             }
         });
 
-        async function extractTextFromPDF(file) {
+        async function extractTextFromWord(file) {
             const arrayBuffer = await file.arrayBuffer();
-            const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
-            let fullText = '';
-
-            for (let i = 1; i <= pdf.numPages; i++) {
-                const page = await pdf.getPage(i);
-                const textContent = await page.getTextContent();
-                const pageText = textContent.items.map(item => item.str).join(' ');
-                fullText += pageText + '\n\n';
-            }
-
-            return fullText;
+            const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
+            return result.value;
         }
 
         function checkKoreanSpelling(text) {
@@ -917,180 +913,200 @@
             }
         }
 
-        // 검사 결과 PDF 다운로드
+        // 검사 결과 Word 다운로드
         downloadBtn.addEventListener('click', async () => {
             if (detectedErrors.length === 0 && !extractedText) {
-                alert('먼저 PDF 파일을 업로드하고 맞춤법 검사를 실행해주세요.');
+                alert('먼저 Word 파일을 업로드하고 맞춤법 검사를 실행해주세요.');
                 return;
             }
 
-            const { jsPDF } = window.jspdf;
-            const doc = new jsPDF({
-                orientation: 'portrait',
-                unit: 'mm',
-                format: 'a4'
+            const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType, UnderlineType } = docx;
+
+            const doc = new Document({
+                sections: [{
+                    properties: {},
+                    children: [
+                        new Paragraph({
+                            text: "맞춤법 검사 결과",
+                            heading: HeadingLevel.HEADING_1,
+                            alignment: AlignmentType.CENTER,
+                        }),
+                        new Paragraph({ text: "" }),
+                        new Paragraph({
+                            children: [
+                                new TextRun({
+                                    text: `총 오류: ${detectedErrors.length}개`,
+                                    bold: true,
+                                    size: 28,
+                                }),
+                            ],
+                        }),
+                        new Paragraph({
+                            children: [
+                                new TextRun({
+                                    text: `- 맞춤법 오류: ${detectedErrors.filter(e => e.type === 'spelling').length}개`,
+                                    size: 24,
+                                }),
+                            ],
+                        }),
+                        new Paragraph({
+                            children: [
+                                new TextRun({
+                                    text: `- 띄어쓰기 오류: ${detectedErrors.filter(e => e.type === 'spacing').length}개`,
+                                    size: 24,
+                                }),
+                            ],
+                        }),
+                        new Paragraph({
+                            children: [
+                                new TextRun({
+                                    text: `- 비표준어: ${detectedErrors.filter(e => e.type === 'standard').length}개`,
+                                    size: 24,
+                                }),
+                            ],
+                        }),
+                        new Paragraph({ text: "" }),
+                        new Paragraph({ text: "" }),
+                        new Paragraph({
+                            text: "원본 문서 (오류 표시)",
+                            heading: HeadingLevel.HEADING_2,
+                        }),
+                        new Paragraph({ text: "" }),
+                        ...createErrorHighlightedParagraphs(extractedText, detectedErrors),
+                        new Paragraph({ text: "" }),
+                        new Paragraph({ text: "" }),
+                        new Paragraph({
+                            text: "발견된 오류 목록",
+                            heading: HeadingLevel.HEADING_2,
+                        }),
+                        new Paragraph({ text: "" }),
+                        ...detectedErrors.map((error, index) => {
+                            return new Paragraph({
+                                children: [
+                                    new TextRun({
+                                        text: `${index + 1}. `,
+                                        bold: true,
+                                    }),
+                                    new TextRun({
+                                        text: `틀린 표현: "${error.wrong}"`,
+                                        color: "DC3545",
+                                    }),
+                                    new TextRun({
+                                        text: ` → 올바른 표현: "${error.correct}"`,
+                                        color: "28A745",
+                                    }),
+                                    new TextRun({
+                                        text: `\n   ${error.description}`,
+                                        italics: true,
+                                    }),
+                                ],
+                            });
+                        }),
+                    ],
+                }],
             });
 
-            doc.setFont('helvetica');
-            
-            let yPos = 20;
-            const pageWidth = doc.internal.pageSize.getWidth();
-            const pageHeight = doc.internal.pageSize.getHeight();
-            const margin = 20;
-            const maxWidth = pageWidth - (margin * 2);
-
-            // 제목
-            doc.setFontSize(20);
-            doc.setTextColor(102, 126, 234);
-            doc.text('Korean Spelling Check Report', margin, yPos);
-            yPos += 15;
-
-            // 통계
-            doc.setFontSize(14);
-            doc.setTextColor(0, 0, 0);
-            doc.text(`Total Errors: ${detectedErrors.length}`, margin, yPos);
-            yPos += 10;
-
-            const spellingErrors = detectedErrors.filter(e => e.type === 'spelling').length;
-            const spacingErrors = detectedErrors.filter(e => e.type === 'spacing').length;
-            const standardErrors = detectedErrors.filter(e => e.type === 'standard').length;
-
-            doc.setFontSize(12);
-            doc.text(`- Spelling: ${spellingErrors}`, margin + 5, yPos);
-            yPos += 7;
-            doc.text(`- Spacing: ${spacingErrors}`, margin + 5, yPos);
-            yPos += 7;
-            doc.text(`- Non-standard: ${standardErrors}`, margin + 5, yPos);
-            yPos += 15;
-
-            // 원본 텍스트 (오류 표시)
-            doc.setFontSize(14);
-            doc.setTextColor(102, 126, 234);
-            doc.text('Original Text with Errors Highlighted:', margin, yPos);
-            yPos += 10;
-
-            doc.setFontSize(11);
-            doc.setTextColor(0, 0, 0);
-
-            const lines = doc.splitTextToSize(extractedText, maxWidth);
-            for (let i = 0; i < lines.length; i++) {
-                if (yPos > pageHeight - 20) {
-                    doc.addPage();
-                    yPos = 20;
-                }
-
-                const line = lines[i];
-                let hasError = false;
-
-                for (const error of detectedErrors) {
-                    if (line.includes(error.wrong)) {
-                        hasError = true;
-                        break;
-                    }
-                }
-
-                if (hasError) {
-                    doc.setTextColor(220, 53, 69);
-                    doc.text(line, margin, yPos);
-                    
-                    const textWidth = doc.getTextWidth(line);
-                    doc.setDrawColor(220, 53, 69);
-                    doc.line(margin, yPos + 1, margin + textWidth, yPos + 1);
-                } else {
-                    doc.setTextColor(0, 0, 0);
-                    doc.text(line, margin, yPos);
-                }
-
-                yPos += 7;
-            }
-
-            // 오류 목록
-            if (detectedErrors.length > 0) {
-                yPos += 10;
-                if (yPos > pageHeight - 40) {
-                    doc.addPage();
-                    yPos = 20;
-                }
-
-                doc.setFontSize(14);
-                doc.setTextColor(220, 53, 69);
-                doc.text('Detected Errors:', margin, yPos);
-                yPos += 10;
-
-                doc.setFontSize(10);
-                
-                detectedErrors.forEach((error, index) => {
-                    if (yPos > pageHeight - 30) {
-                        doc.addPage();
-                        yPos = 20;
-                    }
-
-                    doc.setTextColor(0, 0, 0);
-                    doc.text(`${index + 1}. Wrong: "${error.wrong}" -> Correct: "${error.correct}"`, margin, yPos);
-                    yPos += 6;
-                    
-                    doc.setTextColor(100, 100, 100);
-                    const descLines = doc.splitTextToSize(`   ${error.description}`, maxWidth - 10);
-                    descLines.forEach(descLine => {
-                        doc.text(descLine, margin + 5, yPos);
-                        yPos += 6;
-                    });
-                    yPos += 3;
-                });
-            }
-
-            doc.save('korean_spelling_check_report.pdf');
+            const blob = await docx.Packer.toBlob(doc);
+            saveAs(blob, "맞춤법_검사_결과.docx");
         });
 
-        // 수정본 PDF 다운로드
+        function createErrorHighlightedParagraphs(text, errors) {
+            const lines = text.split('\n');
+            return lines.map(line => {
+                const children = [];
+                let lastIndex = 0;
+                let hasError = false;
+
+                // 이 줄에 오류가 있는지 확인
+                errors.forEach(error => {
+                    const index = line.indexOf(error.wrong, lastIndex);
+                    if (index !== -1 && index >= lastIndex) {
+                        hasError = true;
+                        // 오류 이전 텍스트
+                        if (index > lastIndex) {
+                            children.push(new TextRun({
+                                text: line.substring(lastIndex, index),
+                            }));
+                        }
+                        // 오류 텍스트 (빨간색, 밑줄)
+                        children.push(new TextRun({
+                            text: error.wrong,
+                            color: "DC3545",
+                            underline: {
+                                type: UnderlineType.SINGLE,
+                                color: "DC3545",
+                            },
+                            bold: true,
+                        }));
+                        lastIndex = index + error.wrong.length;
+                    }
+                });
+
+                // 나머지 텍스트
+                if (lastIndex < line.length) {
+                    children.push(new TextRun({
+                        text: line.substring(lastIndex),
+                    }));
+                }
+
+                // children이 비어있으면 빈 줄
+                if (children.length === 0) {
+                    children.push(new TextRun({ text: line || "" }));
+                }
+
+                return new Paragraph({ children });
+            });
+        }
+
+        // 수정본 Word 다운로드
         downloadCorrectedBtn.addEventListener('click', async () => {
             if (!correctedText) {
-                alert('먼저 PDF 파일을 업로드하고 맞춤법 검사를 실행해주세요.');
+                alert('먼저 Word 파일을 업로드하고 맞춤법 검사를 실행해주세요.');
                 return;
             }
 
-            const { jsPDF } = window.jspdf;
-            const doc = new jsPDF({
-                orientation: 'portrait',
-                unit: 'mm',
-                format: 'a4'
+            const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType } = docx;
+
+            const lines = correctedText.split('\n');
+            const paragraphs = lines.map(line => 
+                new Paragraph({
+                    children: [
+                        new TextRun({
+                            text: line || "",
+                            size: 24,
+                        }),
+                    ],
+                })
+            );
+
+            const doc = new Document({
+                sections: [{
+                    properties: {},
+                    children: [
+                        new Paragraph({
+                            text: "수정된 문서",
+                            heading: HeadingLevel.HEADING_1,
+                            alignment: AlignmentType.CENTER,
+                        }),
+                        new Paragraph({
+                            children: [
+                                new TextRun({
+                                    text: `총 ${detectedErrors.length}개의 오류가 수정되었습니다.`,
+                                    italics: true,
+                                    size: 22,
+                                }),
+                            ],
+                            alignment: AlignmentType.CENTER,
+                        }),
+                        new Paragraph({ text: "" }),
+                        new Paragraph({ text: "" }),
+                        ...paragraphs,
+                    ],
+                }],
             });
 
-            doc.setFont('helvetica');
-            
-            let yPos = 20;
-            const pageWidth = doc.internal.pageSize.getWidth();
-            const pageHeight = doc.internal.pageSize.getHeight();
-            const margin = 20;
-            const maxWidth = pageWidth - (margin * 2);
-
-            // 제목
-            doc.setFontSize(20);
-            doc.setTextColor(40, 167, 69);
-            doc.text('Corrected Document', margin, yPos);
-            yPos += 10;
-
-            doc.setFontSize(12);
-            doc.setTextColor(100, 100, 100);
-            doc.text(`Total corrections made: ${detectedErrors.length}`, margin, yPos);
-            yPos += 15;
-
-            // 수정된 텍스트
-            doc.setFontSize(11);
-            doc.setTextColor(0, 0, 0);
-
-            const lines = doc.splitTextToSize(correctedText, maxWidth);
-            for (let i = 0; i < lines.length; i++) {
-                if (yPos > pageHeight - 20) {
-                    doc.addPage();
-                    yPos = 20;
-                }
-
-                doc.text(lines[i], margin, yPos);
-                yPos += 7;
-            }
-
-            doc.save('korean_spelling_corrected.pdf');
+            const blob = await docx.Packer.toBlob(doc);
+            saveAs(blob, "수정본_문서.docx");
         });
     </script>
 </body>
