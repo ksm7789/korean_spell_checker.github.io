@@ -46,6 +46,18 @@
             opacity: 0.9;
         }
 
+        .mobile-break {
+            display: none;
+        }
+
+        .mobile-only-text {
+            display: none;
+        }
+
+        .privacy-notice > p {
+            display: block;
+        }
+
         .content {
             padding: 40px;
         }
@@ -552,8 +564,21 @@
         }
 
         @media (max-width: 480px) {
+            .mobile-break {
+                display: inline;
+            }
+
+            .privacy-notice > p {
+                display: none;
+            }
+
+            .mobile-only-text {
+                display: block;
+            }
+
             .header h1 {
                 font-size: 1.5em;
+                line-height: 1.5;
             }
 
             .stats {
@@ -573,7 +598,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>📝 학교생활기록부 맞춤법 검사 프로그램</h1>
+            <h1>📝 학교생활기록부 <br class="mobile-break">맞춤법 검사 프로그램</h1>
             <p>학교생활기록부의 맞춤법, 오탈자, 표준어를 검사합니다</p>
         </div>
 
@@ -626,10 +651,18 @@
 
             <div class="privacy-notice">
                 <div class="lock-icon">🔒</div>
-                <h3>개인정보 보호 안내</h3>
+                <h3>개인정보보호 안내</h3>
                 <p>이 프로그램은 100% 로컬 전용입니다. 모든 데이터는 귀하의 브라우저 메모리에만 저장되며,</p>
                 <p>서버나 외부로 전송되지 않습니다. 페이지를 새로고침하면 모든 데이터가 삭제됩니다.</p>
                 <p>결과를 보관하려면 반드시 직접 다운로드 기능을 사용하세요.</p>
+                <div class="mobile-only-text">
+                    <p>이 프로그램은 100% 로컬 전용입니다.<br>
+                    모든 데이터는 귀하의 브라우저 메모리에만 저장되며,<br>
+                    서버나 외부로 전송되지 않습니다.<br>
+                    페이지를 새로고침하면 모든 데이터가 삭제됩니다.<br>
+                    결과를 보관하려면<br>
+                    반드시 직접 다운로드 기능을 사용하세요.</p>
+                </div>
             </div>
         </div>
     </div>
