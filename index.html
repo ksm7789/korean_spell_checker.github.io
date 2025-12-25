@@ -411,6 +411,163 @@
             margin-top: 15px;
             opacity: 0.85;
         }
+
+        /* 모바일 반응형 디자인 */
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+
+            .container {
+                border-radius: 15px;
+            }
+
+            .header h1 {
+                font-size: 1.8em;
+                margin-bottom: 8px;
+            }
+
+            .header p {
+                font-size: 0.95em;
+            }
+
+            .header {
+                padding: 20px 15px;
+            }
+
+            .content {
+                padding: 20px 15px;
+            }
+
+            .upload-section {
+                padding: 30px 20px;
+            }
+
+            .upload-icon {
+                font-size: 3em;
+            }
+
+            .upload-section h2 {
+                font-size: 1.3em;
+            }
+
+            .upload-section p {
+                font-size: 0.95em;
+            }
+
+            .btn {
+                padding: 12px 25px;
+                font-size: 0.95em;
+                margin: 5px 0;
+                width: 100%;
+                max-width: 300px;
+            }
+
+            .stats {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 10px;
+            }
+
+            .stat-card {
+                padding: 15px;
+            }
+
+            .stat-number {
+                font-size: 2em;
+            }
+
+            .stat-label {
+                font-size: 0.9em;
+            }
+
+            .text-preview,
+            .corrected-preview,
+            .error-section {
+                padding: 15px;
+                max-height: 400px;
+            }
+
+            .text-preview h3,
+            .corrected-preview h3,
+            .error-section h3 {
+                font-size: 1.1em;
+                margin-bottom: 10px;
+            }
+
+            .text-content {
+                font-size: 0.95em;
+                line-height: 1.7;
+            }
+
+            .error-item {
+                padding: 12px;
+                margin-bottom: 12px;
+            }
+
+            .error-text {
+                font-size: 0.95em;
+            }
+
+            .error-description {
+                font-size: 0.85em;
+            }
+
+            .download-section {
+                padding: 15px;
+            }
+
+            .download-section h3 {
+                font-size: 1.1em;
+                margin-bottom: 12px;
+            }
+
+            .privacy-notice {
+                padding: 20px 15px;
+                margin-top: 30px;
+            }
+
+            .privacy-notice .lock-icon {
+                font-size: 2.5em;
+                margin-bottom: 12px;
+            }
+
+            .privacy-notice h3 {
+                font-size: 1.2em;
+                margin-bottom: 12px;
+            }
+
+            .privacy-notice p {
+                font-size: 0.9em;
+                line-height: 1.6;
+            }
+
+            .file-name {
+                font-size: 1em;
+                word-break: break-all;
+            }
+
+            .loading p {
+                font-size: 0.95em;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .header h1 {
+                font-size: 1.5em;
+            }
+
+            .stats {
+                grid-template-columns: 1fr;
+            }
+
+            .upload-section {
+                padding: 25px 15px;
+            }
+
+            .privacy-notice p {
+                font-size: 0.85em;
+            }
+        }
     </style>
 </head>
 <body>
